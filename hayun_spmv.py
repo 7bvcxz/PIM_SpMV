@@ -22,10 +22,10 @@ k = 32
 num_idx = 2048
 num_row = 1000
 
-sparsity = 0.75
+sparsity = 0.99
 nnz_per_cluster = int(num_idx * num_row * (1-sparsity) / 32)  # 16000
-nnz_per_cluster_l = int(nnz_per_cluster * 0.99)
-nnz_per_cluster_h = int(nnz_per_cluster * 1.01)
+nnz_per_cluster_l = int(nnz_per_cluster * 0.95)
+nnz_per_cluster_h = int(nnz_per_cluster * 1.05)
 
 cluster = torch.zeros((k, num_row)) - 1
 centroid = torch.zeros((k, num_idx)) - 1
@@ -140,10 +140,15 @@ class Clustering(nn.Module):
         #print("self.Y : \n", self.Y)
         y = self.gs(self.Y, force_hard=True)   # [R, K]
         #y = y.view(R, 1, K) * self.D.view(R, C, 1)  # [R, C, K]
-        y = y.view(R, 1, K) * self.D.view(R, C, 1)  # [R, C, K]
-        reduced_y = 1. - torch.prod(1 - y, 0)   # [C, K]
-        return torch.sum(reduced_y, dim=0), torch.sum(y, dim=[0, 1])  # [K], [K]
-   
+        x = y.view(R, 1, K) * self.D.view(R, C, 1)  # [R, C, K]
+        reduced_x = 1. - torch.prod(1 - x, 0)   # [C, K]
+        return y, torch.sum(reduced_x, dim=0), torch.sum(x, dim=[0, 1])  # [K], [K]
+
+def print_(name, data):
+    for i in data.cpu().detach().numpy():
+        print(i, end=" ")
+    print()
+
 print("< Define Functions Ended! >\n")
 
 
@@ -151,7 +156,7 @@ print("< Pruning Layer... ( sparsity: x", sparsity, ") >")
 fc = prune_layer(fc, sparsity)
 nnz = torch.count_nonzero(fc, dim=1) * 1.0
 print("nnz : ", torch.count_nonzero(fc).item())
-print("1000*2048 25% : ", int(1000*2048/4))
+print("target nnz : ", int(1000*2048*(1-sparsity)))
 print("< Pruning Finished! >\n")
 
 #########################################################################
@@ -165,33 +170,31 @@ R, C = D.shape
 K = 32
 
 model = Clustering(D, K)
-#criterion = nn.L1Loss()
 criterion = nn.MSELoss()
-target_col = torch.zeros((K)).cuda()
-target_col.data.fill_(C/K)
-target_calc = torch.zeros((K)).cuda()
-#target_calc.data.fill_(R*C*0.25/K)
-target_calc.data.fill_(16000)
+
+target_col = (torch.zeros(K).cuda()).data.fill_(C/K)
+target_calc = (torch.zeros(K).cuda()).data.fill_(R*C*(1-sparsity)/K)
 
 minimum = 30000
-lr = 30
-optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0, weight_decay=0.05)
-scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.997)
+lr = 100
+optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0, weight_decay=0.001)
+scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.998)
 model.cuda()
 
 model.train()
-for i in range(10000):
-    col_per_cluster, calc_per_cluster = model()
+for i in range(4000):
+    y, col_per_cluster, calc_per_cluster = model()
     #print("col_per_cluster : \n", col_per_cluster)
     #print("calc_per_cluster : \n", calc_per_cluster)
-    target_calc.data.fill_(min(col_per_cluster + calc_per_cluster)-100)
-    loss = criterion(col_per_cluster + calc_per_cluster, target_calc)
+    #target_calc.data.fill_(min(col_per_cluster + calc_per_cluster)-100)
+    loss = criterion(col_per_cluster + calc_per_cluster, target_calc + target_col)
     #loss = criterion(col_per_cluster, target_col) + criterion(calc_per_cluster, target_calc)
     #loss = criterion(col_per_cluster, target_col) * criterion(calc_per_cluster, target_calc)
     #loss = criterion(col_per_cluster + calc_per_cluster, target_col + target_calc)
     #loss = criterion(calc_per_cluster, target_calc)
     if (max(col_per_cluster + calc_per_cluster).item() < minimum):
         minimum = max(col_per_cluster + calc_per_cluster).item()
+        y_ = y
     #print("iter : ", i, "\tloss : ", criterion(col_per_cluster, target_col).item(), "\t", criterion(calc_per_cluster, target_col).item())
     print("iter : ", i, "\tloss : ", criterion(col_per_cluster, target_col).item() + criterion(calc_per_cluster, target_col).item())
     #print(optimizer.param_groups[0]['lr'], loss, torch.std(calc_per_cluster))
@@ -201,10 +204,23 @@ for i in range(10000):
     optimizer.step()
     scheduler.step()
 
-model.eval()
-col_per_cluster, calc_per_cluster = model()
-print("col_per_cluster : \n", col_per_cluster)
-print("calc_per_cluster : \n", calc_per_cluster)
-print("elements_per_cluster : \n", col_per_cluster + calc_per_cluster)
+nnz_k = torch.zeros(K)
+col_k = torch.zeros((K, C))
+row_k = torch.zeros(K)
 
-print(minimum)
+y_ = torch.argmax(y_, dim=1)
+for row_i in range(num_row):
+    k_i = y_[row_i]
+    nnz_k[k_i] = nnz_k[k_i] + nnz[row_i]
+    col_k[k_i] = torch.logical_or(col_k[k_i], D[row_i])
+    row_k[k_i] = row_k[k_i] + 1
+
+col_k = torch.count_nonzero(col_k, dim=1) 
+tot_k = nnz_k + col_k + row_k
+print_("nnz_k", nnz_k)
+print_("col_k", col_k)
+print_("row_k", row_k)
+print_("tot_k", tot_k)
+print("max : ", max(tot_k))
+
+
