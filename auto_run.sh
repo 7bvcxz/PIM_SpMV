@@ -1,9 +1,9 @@
 #!/bin/sh
-cuda=1
+cuda=0
 
-for model in "ds2_1" "ds2_3r"
+for model in "ds2_" "ds2_"
 do
-	for reg_size in 128
+	for reg_size in 64
 	do
 		for sparsity in 0.9 0.8 0.7 0.6
 		do
