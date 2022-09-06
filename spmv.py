@@ -6,9 +6,6 @@ import cvxpy as cvp
 import numpy as np
 import random
 import time
-import ray
-from ray import tune
-from ray.tune.schedulers import ASHAScheduler
 
 num_row = 0
 num_col = 0
