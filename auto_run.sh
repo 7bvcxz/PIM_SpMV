@@ -1,7 +1,7 @@
 #!/bin/sh
 cuda=0
 
-for model in "ds2_" "ds2_"
+for model in "gnmt__" "gnmt__"
 do
 	for reg_size in 64
 	do

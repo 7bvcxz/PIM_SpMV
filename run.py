@@ -72,8 +72,22 @@ elif args.model == 'ds2_3r':
 elif args.model == 'ds2_4r':
     layer = torch.load('deepspeech2/ds2_4r.pt')
 
-elif args.model == 'gnmt_0':
-    layer = torch.load('gnmt/gnmt_0.pt')
+elif args.model == 'gnmt_dec_0':
+    layer = torch.load('gnmt/gnmt_dec_0.pt')
+elif args.model == 'gnmt_dec_1':
+    layer = torch.load('gnmt/gnmt_dec_1.pt')
+elif args.model == 'gnmt_dec_2':
+    layer = torch.load('gnmt/gnmt_dec_2.pt')
+elif args.model == 'gnmt_enc_0':
+    layer = torch.load('gnmt/gnmt_enc_0.pt')
+elif args.model == 'gnmt_enc_0r':
+    layer = torch.load('gnmt/gnmt_enc_0r.pt')
+elif args.model == 'gnmt_enc_1':
+    layer = torch.load('gnmt/gnmt_enc_1.pt')
+elif args.model == 'gnmt_enc_2':
+    layer = torch.load('gnmt/gnmt_enc_2.pt')
+elif args.model == 'gnmt_enc_3':
+    layer = torch.load('gnmt/gnmt_enc_3.pt')
 
 elif args.model == 'bcsstk32':
     layer = torch.load('sci_model/csstk32.pt')

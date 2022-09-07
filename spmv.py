@@ -583,7 +583,7 @@ def space_a_register_size_withrow(layer, args):
         ba_idx[ch_i] = ba_idx[ch_i] + 1
        
         for part_i in range(num_part):
-            max_nnz_ch[ch_i][part_i] = max(max_nnz_ch[ch_i][part_i], + nnz_ch_ba_part[ba_i][part_i])
+            max_nnz_ch[ch_i][part_i] = max(max_nnz_ch[ch_i][part_i], nnz_ch_ba_part[ba_i][part_i])
 
     max_nnz_ch = max_nnz_ch.sum(dim=1)  # [CH]
     col_ch = torch.count_nonzero(col_ch, dim=1)
