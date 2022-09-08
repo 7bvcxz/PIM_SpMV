@@ -237,6 +237,65 @@ elif args.ver == "test":
     nnz = layer.sum(1).sort().values
     np_nnz = nnz.numpy()
     np.save('./graph/nnz_'+args.model+'_'+args.sparsity+'.npy', np_nnz)
+elif args.ver == "test_result":
+    #models = ['ds2_0r', 'ds2_1', 'ds2_2r', 'ds2_3r', 'ds2_4']  # → Ended!
+    models = ['ds2_0', 'ds2_1r', 'ds2_2', 'ds2_3', 'ds2_4r']  # → Not yet
+    #models = ['gnmt_dec_0', 'gnmt_dec_1', 'gnmt_dec_2']  # Not yet
+    #models = ['gnmt_enc_0', 'gnmt_enc_0r', 'gnmt_enc_1', 'gnmt_enc_2']  # Not yet
+    algorithms = [15, 13, 14, 17, 12]
+    sparsitys = [0.9, 0.8, 0.7, 0.6]
+    register_sizes = [64, 128]
+   
+    args.print_option = 4
+    for args.model in models:
+        if args.model == 'ds2_0':
+            layer = torch.load('deepspeech2/ds2_0.pt')
+        elif args.model == 'ds2_1':
+            layer = torch.load('deepspeech2/ds2_1.pt')
+        elif args.model == 'ds2_2':
+            layer = torch.load('deepspeech2/ds2_2.pt')
+        elif args.model == 'ds2_3':
+            layer = torch.load('deepspeech2/ds2_3.pt')
+        elif args.model == 'ds2_4':
+            layer = torch.load('deepspeech2/ds2_4.pt')
+        elif args.model == 'ds2_0r':
+            layer = torch.load('deepspeech2/ds2_0r.pt')
+        elif args.model == 'ds2_1r':
+            layer = torch.load('deepspeech2/ds2_1r.pt')
+        elif args.model == 'ds2_2r':
+            layer = torch.load('deepspeech2/ds2_2r.pt')
+        elif args.model == 'ds2_3r':
+            layer = torch.load('deepspeech2/ds2_3r.pt')
+        elif args.model == 'ds2_4r':
+            layer = torch.load('deepspeech2/ds2_4r.pt')
+
+        elif args.model == 'gnmt_dec_0':
+            layer = torch.load('gnmt/gnmt_dec_0.pt')
+        elif args.model == 'gnmt_dec_1':
+            layer = torch.load('gnmt/gnmt_dec_1.pt')
+        elif args.model == 'gnmt_dec_2':
+            layer = torch.load('gnmt/gnmt_dec_2.pt')
+        elif args.model == 'gnmt_enc_0':
+            layer = torch.load('gnmt/gnmt_enc_0.pt')
+        elif args.model == 'gnmt_enc_0r':
+            layer = torch.load('gnmt/gnmt_enc_0r.pt')
+        elif args.model == 'gnmt_enc_1':
+            layer = torch.load('gnmt/gnmt_enc_1.pt')
+        elif args.model == 'gnmt_enc_2':
+            layer = torch.load('gnmt/gnmt_enc_2.pt')
+        elif args.model == 'gnmt_enc_3':
+            layer = torch.load('gnmt/gnmt_enc_3.pt')
+
+        for args.register_size in register_sizes:
+            for args.sparsity in sparsitys:
+                args.layer = spmv.prune_layer(layer, args.sparsity)
+                print(args.model, args.register_size, args.sparsity, end="\t")
+                for args.algorithm in algorithms:
+                    file_name = "./ckpt/" + args.model + "_alg" + str(args.algorithm) + "_sp" + str(args.sparsity) + "_ch" + str(args.num_ch) + "_ba" + str(args.num_ba) + "_reg" + str(args.register_size) + ".pt"
+                    P = torch.load(file_name).detach()
+                    cost = spmv.print_specific(P, args)
+                    print(cost, end="\t")
+                print()
 
 P = P.detach()
 spmv.print_specific(P, args)

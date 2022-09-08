@@ -129,7 +129,6 @@ def print_specific(P, args):
                 for ba_i in range(BA):
                     print("{:.1f}".format(nnz_ch_ba[np_i][ch_i][ba_i].item()), end=" ")
                 print()
-
     elif args.print_option == 3:  # With Register_size, Print [np, CH] score
         print("--Printing [np, CH] L/B Score...--")
         # P [R, CH, BA]
@@ -145,6 +144,24 @@ def print_specific(P, args):
             for ch_i in range(CH):
                 print("{:.2f}".format(lb_score_ch[np_i][ch_i].item()), end=" ")
             print()
+    elif args.print_option == 4:  # With Register_size, Print [np, CH] score
+        # P [R, CH, BA] (max percentage to 1)
+        P = P.reshape(R, CH*BA)
+        max_idx_ = torch.argmax(P, dim=1)
+        P.fill_(0.)
+        P[torch.arange(R), max_idx_] = 1.
+        P = P.reshape(R, CH, BA)
+        x = P.view(R, 1, 1, CH, BA) * D_.view(R, num_part, register_size, 1, 1) # [R, np, rs, CH, BA]
+
+        nnz_ch_ba = torch.sum(x, dim=[0, 2])  # [np, CH, BA]
+        max_nnz_ch = torch.max(nnz_ch_ba, dim=2).values  # [np, CH]
+        tot_max_nnz_ch = max_nnz_ch.sum(dim=0)  # [CH]
+
+        num_col_ch = torch.zeros(CH).fill_(C)  # Set to all column for now
+        num_row_ch = torch.sum(P, dim=[0, 2])
+
+        cost_ch = tot_max_nnz_ch + num_col_ch + num_row_ch
+        return torch.max(cost_ch).item()
     else:
         print("Something gone wrong")
     return 0 
