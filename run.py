@@ -13,19 +13,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--ver', required=False, default='soft_split', help='')
 parser.add_argument('--algorithm', required=False, default='grad_row', help='')
 parser.add_argument('--model', required=False, default='resnet', help='')
-parser.add_argument('--num_ch', required=False, default=16, help='')
-parser.add_argument('--num_ba', required=False, default=4, help='')
-parser.add_argument('--part_col', required=False, default=16, help='')
+parser.add_argument('--num_ch', required=False, default=16, type=int, help='')
+parser.add_argument('--num_ba', required=False, default=4, type=int, help='')
+parser.add_argument('--part_col', required=False, default=16, type=int, help='')
 parser.add_argument('--col_first', required=False, default=0, help='')
 parser.add_argument('--gs', required=False, default=1, help='')
 parser.add_argument('--gs_hard', required=False, default=False, type=bool, help='')
-parser.add_argument('--sparsity', required=False, default=0.95, help='')
-parser.add_argument('--register_size', required=False, default=128, help='')
-parser.add_argument('--bound_ratio', required=False, default=0.02, help='')
+parser.add_argument('--sparsity', required=False, default=0.95, type=float, help='')
+parser.add_argument('--register_size', required=False, default=128, type=int, help='')
+parser.add_argument('--bound_ratio', required=False, default=0.02, type=float, help='')
 parser.add_argument('--device', required=False, default='cuda', help='')
-parser.add_argument('--num_iter', required=False, default=4000, help='')
-parser.add_argument('--lr_init', required=False, default=100, help='')
-parser.add_argument('--w_decay', required=False, default=0.015, help='')
+parser.add_argument('--num_iter', required=False, default=4000, type=int, help='')
+parser.add_argument('--lr_init', required=False, default=100, type=float, help='')
+parser.add_argument('--w_decay', required=False, default=0.015, type=float, help='')
 parser.add_argument('--print_option', required=False, default=3, help='')
 args = parser.parse_args()
 # Algorithm Option
@@ -115,6 +115,7 @@ num_ch = int(args.num_ch)
 num_ba = int(args.num_ba)
 gs = int(args.gs)
 sparsity = float(args.sparsity)
+args.sparsity = float(args.sparsity)
 register_size = int(args.register_size)
 bound_ratio = float(args.bound_ratio)
 k = num_ch * num_ba
@@ -123,12 +124,12 @@ num_ch_row = int(num_ch / part_col)
 device = args.device
 lr_init = float(args.lr_init)
 weight_decay = float(args.w_decay)
-file_name = "./ckpt/" + args.model + "_alg" + args.algorithm + "_sp" + args.sparsity + "_ch" + args.num_ch + "_ba" + args.num_ba + "_reg" + args.register_size + ".pt"
+file_name = "./ckpt/" + args.model + "_alg" + args.algorithm + "_sp" + str(args.sparsity) + "_ch" + str(args.num_ch) + "_ba" + str(args.num_ba) + "_reg" + str(args.register_size) + ".pt"
 
-if sparsity != 0:
-    spmv.init(layer, sparsity, num_ch, num_ba, part_col, bound_ratio, device)
+if sparsity != 0:  # ML Application
+    #spmv.init(layer, sparsity, num_ch, num_ba, part_col, bound_ratio, device)
     layer = spmv.prune_layer(layer, sparsity)
-else:
+else:  # Scientific Dataset
     sparsity = 1 - torch.count_nonzero(layer) / (num_row * num_col)
     print("nnzs : ", torch.count_nonzero(layer))
     print("sparsity: ", sparsity)
@@ -203,6 +204,17 @@ elif args.ver == "no_split":
         P, nnz_ch, col_ch, row_ch = spmv.test_loss(layer, args)
     elif algorithm == "grad_row_no_register_size" or algorithm == "17":
         P, nnz_ch, col_ch, row_ch = spmv.grad_row_no_register_size(layer, args)
+elif args.ver == "by_cmd":
+    if algorithm == "grad_row_register_size" or algorithm == "18":
+        P, nnz_ch, col_ch, row_ch = spmv.grad_row_register_size_cmd(layer, args)
+    elif algorithm == "space_a_cmd" or algorithm == "19":
+        P, nnz_ch, col_ch, row_ch = spmv.space_a_cmd(layer, args)
+    elif algorithm == "space_a_register_size_withrow" or algorithm == "20":
+        P, nnz_ch, col_ch, row_ch = spmv.space_a_withrow_cmd(layer, args)
+    elif algorithm == "sequence_row_threshold_cmd" or algorithm == "21":
+        P, nnz_ch, col_ch, row_ch = spmv.sequence_row_threshold_cmd(layer, args)
+    elif algorithm == "grad_row_no_register_size" or algorithm == "22":
+        P, nnz_ch, col_ch, row_ch = spmv.grad_row_no_register_size_cmd(layer, args)
 elif args.ver == "test_split":
     if algorithm == "grad_row_register_size" or algorithm == "12":
         best_case = 1000000
@@ -239,9 +251,12 @@ elif args.ver == "test":
     np.save('./graph/nnz_'+args.model+'_'+args.sparsity+'.npy', np_nnz)
 elif args.ver == "test_result":
     #models = ['ds2_0r', 'ds2_1', 'ds2_2r', 'ds2_3r', 'ds2_4']  # → Ended!
-    models = ['ds2_0', 'ds2_1r', 'ds2_2', 'ds2_3', 'ds2_4r']  # → Not yet
-    #models = ['gnmt_dec_0', 'gnmt_dec_1', 'gnmt_dec_2']  # Not yet
-    #models = ['gnmt_enc_0', 'gnmt_enc_0r', 'gnmt_enc_1', 'gnmt_enc_2']  # Not yet
+    #models = ['gnmt_enc_0', 'gnmt_enc_0r', 'gnmt_enc_1', 'gnmt_enc_2', 'gnmt_enc_3']  # Ended!
+    models = ['gnmt_dec_0', 'gnmt_dec_1', 'gnmt_dec_2']  # Ended!
+    #models = ['gnmt_enc_0', 'gnmt_enc_0r', 'gnmt_enc_1']  # Ended!
+    #models = ['gnmt_dec_0', 'gnmt_dec_1', 'gnmt_dec_2', 'gnmt_enc_0r', 'gnmt_enc_3']  # Ended!
+    #models = ['ds2_0', 'ds2_1r', 'ds2_2', 'ds2_3', 'ds2_4r']  # → Not yet
+    #models = ['gnmt_enc_2'] # → Ended!
     algorithms = [15, 13, 14, 17, 12]
     sparsitys = [0.9, 0.8, 0.7, 0.6]
     register_sizes = [64, 128]
@@ -290,6 +305,7 @@ elif args.ver == "test_result":
             for args.sparsity in sparsitys:
                 args.layer = spmv.prune_layer(layer, args.sparsity)
                 print(args.model, args.register_size, args.sparsity, end="\t")
+                spmv.init(args.layer, args.sparsity, num_ch, num_ba, part_col, bound_ratio, device)
                 for args.algorithm in algorithms:
                     file_name = "./ckpt/" + args.model + "_alg" + str(args.algorithm) + "_sp" + str(args.sparsity) + "_ch" + str(args.num_ch) + "_ba" + str(args.num_ba) + "_reg" + str(args.register_size) + ".pt"
                     P = torch.load(file_name).detach()
@@ -300,7 +316,7 @@ elif args.ver == "test_result":
 P = P.detach()
 spmv.print_specific(P, args)
 
-args.print_option = 0
+args.print_option = 0 + 10
 print("new optimized cost!")
 new_cost = spmv.print_specific(P, args)
 

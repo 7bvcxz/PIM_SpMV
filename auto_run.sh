@@ -1,9 +1,10 @@
 #!/bin/sh
 cuda=0
 
-for model in "ds2_"
+"""
+for model in "ds2_4r"
 do
-	for reg_size in 64 128
+	for reg_size in 128
 	do
 		for sparsity in 0.9 0.8 0.7 0.6
 		do
@@ -36,9 +37,10 @@ do
 		done
 	done
 done
-
 """
-for model in "ds2_0" "ds2_0r" "ds2_1" "ds2_1r" "ds2_2" "ds2_2r" "ds2_3" "ds2_3r" "ds2_4" "ds2_4r" "gnmt_enc_0" "gnmt_enc_0r" "gnmt_enc_1" "gnmt_enc_2" "gnmt_enc_3" "gnmt_dec_0" "gnmt_dec_1" "gnmt_dec_2"
+
+#for model in "ds2_0" "ds2_0r" "ds2_1" "ds2_1r" "ds2_2" "ds2_2r" "ds2_3" "ds2_3r" "ds2_4" "ds2_4r" "gnmt_enc_0" "gnmt_enc_0r" "gnmt_enc_1" "gnmt_enc_2" "gnmt_enc_3" "gnmt_dec_0" "gnmt_dec_1" "gnmt_dec_2"
+for model in "ds2_1r"
 do
 	for reg_size in 64 128
 	do
@@ -57,4 +59,3 @@ do
 		done
 	done
 done
-"""

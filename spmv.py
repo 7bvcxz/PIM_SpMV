@@ -7,6 +7,7 @@ import numpy as np
 import random
 import time
 
+"""
 num_row = 0
 num_col = 0
 num_ch = 0
@@ -21,6 +22,7 @@ nnz_per_cluster = 0
 nnz_per_cluster_h = 0
 nnz_per_cluster_l = 0
 device = 0
+"""
 
 def init(layer_, sparsity_, num_ch_, num_ba_, part_col_, bound_ratio_, device_):
     global num_row
@@ -53,12 +55,17 @@ def init(layer_, sparsity_, num_ch_, num_ba_, part_col_, bound_ratio_, device_):
     nnz_per_cluster_l = int(nnz_per_cluster * (1-bound_ratio))
     device = device_
 
+def ceil_16(a):
+    return (a-1)//16 + 1
+
 def print_(name, data):
     for i in data.cpu().detach().numpy():
         print(i, end=" ")
     print()
 
 def prune_layer(layer, sparsity):
+    num_row = layer.shape[0]
+    num_col = layer.shape[1]
     layer_ = layer.abs().reshape(-1).sort()
     threshold = layer_.values[int(num_col*num_row*sparsity)-1].item()
     return (layer.abs() > threshold)*1.0
@@ -104,6 +111,29 @@ def print_specific(P, args):
         print_("", num_row_ch)
 
         cost_ch = tot_max_nnz_ch + num_col_ch + num_row_ch
+        print_("", cost_ch)
+        print("max : ", torch.max(cost_ch).item())
+        
+        return torch.max(cost_ch).item()
+ 
+    elif args.print_option == 0 + 10:  # With Register_Size By CMD
+        print("--Printing Performance (with reg_size)...--")
+        D_ = ceil_16(D_.sum(dim=2))  # [R, num_part]
+        x = P.view(R, 1, CH, BA) * D_.view(R, num_part, 1, 1) # [R, np, CH, BA]
+        
+        cmd_ch_ba = x.sum(dim=0)  # [np, CH, BA]
+        max_cmd_ch = torch.max(cmd_ch_ba, dim=2).values  # [np, CH]
+        tot_max_cmd_ch = max_cmd_ch.sum(dim=0)  # [CH]
+
+        num_col_ch = torch.zeros(CH).fill_(ceil_16(C))  # Set to all column for now
+        num_row_ch = ceil_16(torch.sum(P, dim=[0, 2]))
+
+        print("cmd_ch / col_ch / row_ch")
+        print_("", tot_max_cmd_ch)
+        print_("", num_col_ch)
+        print_("", num_row_ch)
+
+        cost_ch = tot_max_cmd_ch + num_col_ch + num_row_ch
         print_("", cost_ch)
         print("max : ", torch.max(cost_ch).item())
         
@@ -335,7 +365,6 @@ def sequence_nnz_threshold(layer, num_ch_):
     return nnz_ch, col_ch, row_ch
 
 def sequence_row_threshold_register_size(layer, args):
-    device = args.device
     CH = int(args.num_ch)
     BA = int(args.num_ba)
     register_size = int(args.register_size)
@@ -343,6 +372,8 @@ def sequence_row_threshold_register_size(layer, args):
     C = layer.shape[1]
     nnz_M = torch.count_nonzero(layer, dim=1) * 1.0
     num_part = (C - 1) // register_size + 1
+    nnz_per_cluster = int(R*C*(1-args.sparsity)/(CH*BA))
+    nnz_per_cluster_h = int(nnz_per_cluster * (1+args.bound_ratio))
 
     nnz_ch_ba = torch.zeros(CH*BA)
     nnz_ch = torch.zeros(CH, num_part)
@@ -350,7 +381,7 @@ def sequence_row_threshold_register_size(layer, args):
     row_ch = torch.zeros(CH)
     P = torch.zeros((R, CH, BA))
     
-    accum_ch_ba = torch.zeros(CH * BA, num_col)
+    accum_ch_ba = torch.zeros(CH * BA, C)
     nnz_ch_ba_part = torch.zeros(CH * BA, num_part)
     
     ba_i = 0
@@ -380,6 +411,29 @@ def sequence_row_threshold_register_size(layer, args):
     col_ch = torch.count_nonzero(col_ch, dim=1)
 
     return P, max_nnz_ch, col_ch, row_ch
+
+
+def sequence_row_threshold_cmd(layer, args):
+    R = layer.shape[0]
+    C = layer.shape[1]
+    CH = args.num_ch
+    BA = args.num_ba
+    cmd_ch_ba = torch.zeros(CH*BA)
+    nnz_M = torch.count_nonzero(layer, dim=1) * 1.0
+    cmd_M = ceil_16(nnz_M)
+    cmd_per_ch_ba = (cmd_M.sum()/(CH*BA))
+    cmd_per_ch_ba_h = cmd_per_ch_ba * (1+args.bound_ratio)
+    _ = torch.zeros(CH)
+
+    P = torch.zeros(R, CH, BA)
+    ba_i = 0
+    for row_i in range(R):
+        if cmd_ch_ba[ba_i] + cmd_M[row_i] > cmd_per_ch_ba_h:
+            ba_i = ba_i + 1
+        cmd_ch_ba[ba_i] = cmd_ch_ba[ba_i] + cmd_M[row_i]
+        P[row_i][ba_i//BA][ba_i%BA] = 1
+
+    return P, _, _, _
 
 def space_a(layer, num_ch_):
     ### >> for bank << ###
@@ -534,7 +588,7 @@ def space_a_register_size_withrow(layer, args):
     tot_nnz = torch.count_nonzero(layer)
     nnz_M = torch.count_nonzero(layer, dim=1) * 1.0
     thr_per_ba = torch.ceil((tot_nnz + num_row) / (num_ch*num_ba)).item()
-    thr_per_ch = torch.ceil(tot_nnz / (num_ch*num_ba) + num_row / num_ch).item()
+    thr_per_ch = torch.ceil(tot_nnz / num_ch + num_row / num_ch).item()
 
     P = torch.zeros((num_row, num_ch, num_ba))
     P_ba = torch.zeros((num_row, num_ch*num_ba))
@@ -606,6 +660,148 @@ def space_a_register_size_withrow(layer, args):
     col_ch = torch.count_nonzero(col_ch, dim=1)
 
     return P, max_nnz_ch, col_ch, row_ch
+
+def space_a_cmd(layer, args):
+    num_ch = int(args.num_ch)
+    num_ba = int(args.num_ba)
+    num_row = layer.shape[0]
+    num_col = layer.shape[1]
+    register_size = int(args.register_size)
+ 
+    ### >> for bank << ###
+    num_part = (num_col - 1) // register_size + 1
+
+    cmd_ch_ba = torch.zeros(num_ch * num_ba)
+    col_ch_ba = torch.zeros(num_ch * num_ba, num_col)
+    row_ch_ba = torch.zeros(num_ch * num_ba)
+
+    cmd_M = ceil_16(torch.count_nonzero(layer, dim=1) * 1.0)  # [R]
+    tot_cmd = cmd_M.sum()
+    cmd_per_ba = torch.ceil(tot_cmd / (num_ch*num_ba)).item()
+    cmd_per_ch = torch.ceil(tot_cmd / num_ch).item()
+
+    P = torch.zeros((num_row, num_ch, num_ba))
+    P_ba = torch.zeros((num_row, num_ch*num_ba))
+    ba_idx = torch.zeros(num_ch).int()
+    
+    score_ba = torch.zeros(num_ch*num_ba)
+    for row_i in range(num_row):
+        print("iter : ", row_i+1, end='\t')
+        for ba_i in range(num_ch*num_ba):
+            if (cmd_ch_ba[ba_i] + cmd_M[row_i]) > cmd_per_ba:
+                score_ba[ba_i] = -1 * (cmd_ch_ba[ba_i] + cmd_M[row_i] - cmd_per_ba)
+            else:
+                overlap = torch.count_nonzero(torch.logical_and(col_ch_ba[ba_i], layer[row_i])*1).item()
+                score_ba[ba_i] = max(overlap / cmd_M[row_i], 1 / (cmd_ch_ba[ba_i] + cmd_M[row_i]))
+        ba_i = torch.argmax(score_ba)
+    
+        print("row ", row_i, "   \t→ cluster ", ba_i.item())
+        cmd_ch_ba[ba_i] = cmd_ch_ba[ba_i] + cmd_M[row_i]
+        col_ch_ba[ba_i] = torch.logical_or(col_ch_ba[ba_i], layer[row_i])*1
+        if cmd_M[row_i] != 0:
+            row_ch_ba[ba_i] = row_ch_ba[ba_i] + 1 
+        P_ba[row_i][ba_i] = 1
+
+    cmd_ch = torch.zeros(num_ch)
+    col_ch = torch.zeros(num_ch, num_col)
+    row_ch = torch.zeros(num_ch)
+ 
+    score_ch = torch.zeros(num_ch)
+    for ba_i in range(num_ch*num_ba):
+        print("iter : ", ba_i+1, end='\t')
+        for ch_i in range(num_ch):
+            if ba_idx[ch_i] == 16:  # This Channel is Full!
+                score_ch[ch_i] = -777777777
+            elif cmd_ch[ch_i] + cmd_ch_ba[ba_i] > cmd_per_ch:
+                score_ch[ch_i] = -1 * (cmd_ch[ch_i] + cmd_ch_ba[ba_i] - cmd_per_ch)
+            else:
+                overlap = torch.count_nonzero(torch.logical_and(col_ch, col_ch_ba[ba_i])*1).item()
+                score_ch[ch_i] = max(overlap / cmd_ch_ba[ba_i], 1 / (cmd_ch[ch_i] + cmd_ch_ba[ba_i]))
+        ch_i = torch.argmax(score_ch)
+    
+        print("ba ", ba_i, "   \t→ ch ", ch_i.item())
+        cmd_ch[ch_i] = cmd_ch[ch_i] + cmd_ch_ba[ba_i]
+        col_ch[ch_i] = torch.logical_or(col_ch[ch_i], col_ch_ba[ba_i])*1
+        row_ch[ch_i] = row_ch[ch_i] + row_ch_ba[ba_i]
+        for row_i in range(num_row):
+            P[row_i][ch_i][ba_idx[ch_i]] = P_ba[row_i][ba_i]
+        ba_idx[ch_i] = ba_idx[ch_i] + 1
+
+    col_ch = torch.count_nonzero(col_ch, dim=1)
+    _ = torch.zeros(num_ch)
+
+    return P, _, _, _
+
+def space_a_withrow_cmd(layer, args):
+    num_ch = int(args.num_ch)
+    num_ba = int(args.num_ba)
+    num_row = layer.shape[0]
+    num_col = layer.shape[1]
+    register_size = int(args.register_size)
+ 
+    ### >> for bank << ###
+    num_part = (num_col - 1) // register_size + 1
+
+    cmd_ch_ba = torch.zeros(num_ch * num_ba)
+    col_ch_ba = torch.zeros(num_ch * num_ba, num_col)
+    row_ch_ba = torch.zeros(num_ch * num_ba)
+
+    cmd_M = ceil_16(torch.count_nonzero(layer, dim=1) * 1.0)  # [R]
+    tot_cmd = cmd_M.sum()
+    cmd_per_ba = torch.ceil((tot_cmd + num_row) / (num_ch*num_ba)).item()
+    cmd_per_ch = torch.ceil((tot_cmd + num_row) / num_ch).item()
+
+    P = torch.zeros((num_row, num_ch, num_ba))
+    P_ba = torch.zeros((num_row, num_ch*num_ba))
+    ba_idx = torch.zeros(num_ch).int()
+    
+    score_ba = torch.zeros(num_ch*num_ba)
+    for row_i in range(num_row):
+        print("iter : ", row_i+1, end='\t')
+        for ba_i in range(num_ch*num_ba):
+            if (cmd_ch_ba[ba_i] + cmd_M[row_i] + 1/16) > cmd_per_ba:
+                score_ba[ba_i] = -1 * (cmd_ch_ba[ba_i] + cmd_M[row_i] + 1 - cmd_per_ba)
+            else:
+                overlap = torch.count_nonzero(torch.logical_and(col_ch_ba[ba_i], layer[row_i])*1).item()
+                score_ba[ba_i] = max(overlap / cmd_M[row_i], 1 / (cmd_ch_ba[ba_i] + cmd_M[row_i]))
+        ba_i = torch.argmax(score_ba)
+    
+        print("row ", row_i, "   \t→ cluster ", ba_i.item())
+        cmd_ch_ba[ba_i] = cmd_ch_ba[ba_i] + cmd_M[row_i]
+        col_ch_ba[ba_i] = torch.logical_or(col_ch_ba[ba_i], layer[row_i])*1
+        if cmd_M[row_i] != 0:
+            row_ch_ba[ba_i] = row_ch_ba[ba_i] + 1 
+        P_ba[row_i][ba_i] = 1
+
+    cmd_ch = torch.zeros(num_ch)
+    col_ch = torch.zeros(num_ch, num_col)
+    row_ch = torch.zeros(num_ch)
+ 
+    score_ch = torch.zeros(num_ch)
+    for ba_i in range(num_ch*num_ba):
+        print("iter : ", ba_i+1, end='\t')
+        for ch_i in range(num_ch):
+            if ba_idx[ch_i] == 16:  # This Channel is Full!
+                score_ch[ch_i] = -777777777
+            elif cmd_ch[ch_i] + cmd_ch_ba[ba_i] + row_ch_ba[ba_i]/16> cmd_per_ch:
+                score_ch[ch_i] = -1 * (cmd_ch[ch_i] + cmd_ch_ba[ba_i] + row_ch_ba[ba_i] - cmd_per_ch)
+            else:
+                overlap = torch.count_nonzero(torch.logical_and(col_ch, col_ch_ba[ba_i])*1).item()
+                score_ch[ch_i] = max(overlap / cmd_ch_ba[ba_i], 1 / (cmd_ch[ch_i] + cmd_ch_ba[ba_i]))
+        ch_i = torch.argmax(score_ch)
+    
+        print("ba ", ba_i, "   \t→ ch ", ch_i.item())
+        cmd_ch[ch_i] = cmd_ch[ch_i] + cmd_ch_ba[ba_i]
+        col_ch[ch_i] = torch.logical_or(col_ch[ch_i], col_ch_ba[ba_i])*1
+        row_ch[ch_i] = row_ch[ch_i] + row_ch_ba[ba_i]
+        for row_i in range(num_row):
+            P[row_i][ch_i][ba_idx[ch_i]] = P_ba[row_i][ba_i]
+        ba_idx[ch_i] = ba_idx[ch_i] + 1
+
+    col_ch = torch.count_nonzero(col_ch, dim=1)
+    _ = torch.zeros(num_ch)
+
+    return P, _, _, _
 
 class new_loss_model(nn.Module):
     def __init__(self, D, CH, BA):
@@ -1656,6 +1852,135 @@ def grad_row_no_register_size(layer, args):
     num_row_ch = torch.sum(P, dim=[0, 2])
 
     return P, tot_max_nnz_ch, num_col_ch, num_row_ch
+
+class grad_row_register_size_cmd_model(nn.Module):
+    def __init__(self, D, CH, BA, register_size, device):
+        super(grad_row_register_size_cmd_model, self).__init__()
+        self.D = D.to(device)   # [R, C]
+        self.R = D.shape[0]
+        self.C = D.shape[1]
+        self.CH = CH
+        self.BA = BA
+        self.nnz = self.D.sum(dim=1)  # [R]
+        self.reg_size = register_size
+        self.device = device
+        self.num_part = (self.C-1) // self.reg_size + 1
+        
+        zeros = torch.zeros(self.R, self.num_part * self.reg_size - self.C).to(device)
+        self.D_ = torch.cat([self.D, zeros], dim=1).view(self.R, self.num_part, -1)  # [R, num_part, reg_size]
+        self.cmd_D = ceil_16(self.D_.sum(dim=2))  # [R, num_part]
+
+        self.W = nn.Parameter(torch.zeros((self.R, self.CH*self.BA)), requires_grad=True)
+        torch.nn.init.kaiming_uniform_(self.W)
+        self.sm = GumbelSoftmax()
+
+        self.mask = ((self.nnz != 0)*1.0).reshape(self.R, 1, 1)
+        self.num_col_ch = torch.zeros(self.CH).fill_(ceil_16(self.C)).to(device)  # Set to all column for now
+
+    def forward(self, i):
+        temp = 1000 - 999/9999*i
+        P = self.sm(self.W, temp, force_hard=False).reshape(self.R, self.CH, self.BA)  # [R, CH, BA]
+        P = P * self.mask  # Get rid of nnz=0 rows
+        x = P.view(self.R, 1, self.CH, self.BA) * self.cmd_D.view(self.R, self.num_part, 1, 1) # [R, np, CH, BA]
+
+        cmd_ch_ba = torch.sum(x, dim=0)  # [np, CH, BA]
+        max_cmd_ch = torch.max(cmd_ch_ba, dim=2).values  # [np, CH]
+        tot_max_cmd_ch = max_cmd_ch.sum(dim=0)  # [CH]
+
+        num_row_ch = ceil_16(torch.sum(P, dim=[0, 2]))
+
+        cost_ch = tot_max_cmd_ch + self.num_col_ch + num_row_ch
+        max_cost = torch.max(cost_ch)
+
+        return P, max_cost, cost_ch, max_cmd_ch, cmd_ch_ba, self.num_col_ch, num_row_ch, tot_max_cmd_ch
+
+def grad_row_register_size_cmd(layer, args):
+    device = args.device
+    D = layer.to(device)
+    R = layer.shape[0]
+    C = layer.shape[1]
+    CH = int(args.num_ch)
+    BA = int(args.num_ba)
+    register_size = int(args.register_size)
+    lr_init = float(args.lr_init)
+    weight_decay = float(args.w_decay)
+  
+    ideal_cmd = ceil_16(R * C * (1-args.sparsity) // (CH*BA))
+    ideal_tot = ideal_cmd + ceil_16(C + R/CH)
+    target_tot_ = ideal_tot * 0.8
+
+    num_part = ((C-1)//register_size) + 1
+    zeros = torch.zeros(R, num_part * register_size - C).to(device)
+    D_ = torch.cat([D, zeros], dim=1).view(R, num_part, -1)  # [R, num_part, register_size]
+    cmd_D = ceil_16(D_.sum(dim=2))  # [R, num_part]
+    model = grad_row_register_size_cmd_model(D, CH, BA, register_size, device)
+    criterion = nn.MSELoss()
+    target_tot = torch.zeros(CH).to(device).data.fill_(target_tot_)
+ 
+    print("target_tot : ", target_tot[0].item())
+
+    best_case = 777777777777
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr_init, momentum=0, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.998)
+
+    model.to(device)
+    model.train()
+
+    for i in range(10000):
+        P, max_cost, cost_ch, max_cmd_ch, cmd_ch_ba, num_col_ch, num_row_ch, tot_max_cmd_ch = model(i)
+        # cmd_ch_ba [np, CH, BA]
+        loss_tot = criterion(cost_ch, target_tot)
+        loss_new = torch.std(cmd_ch_ba, dim=2).sum()
+        #loss_max = criterion(max_cost, target_tot[0])
+        loss_prob = (P * (1-P)).sum()
+
+        loss = (0.5+i/5000)*loss_tot + 20*loss_new + loss_prob*10
+        #loss = loss_tot + loss_new
+        
+        print(i, ":\t{:.2f}\t{:.2f}\t{:.2f}\t{:.2f}\tloss: {:.2f}\t{:.2f}\t{:.2f}".format(max_cost.item(),
+                                                            torch.max(tot_max_cmd_ch).item(),
+                                                            torch.max(num_col_ch).item(),
+                                                            torch.max(num_row_ch).item(),
+                                                            loss_tot.item(),
+                                                            loss_new.item(),
+                                                            loss_prob.item()))
+        if (max_cost.item() < best_case and i > 1000):
+            best_case = max_cost.item()
+            P_ = P
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+    model.eval()
+    P = P_.cpu()
+    D_ = D_.cpu()
+    D = D.cpu()
+    cmd_D = cmd_D.cpu()
+    
+    # P [R, CH, BA] (max percentage to 1)
+    P = P.reshape(R, CH*BA)
+    max_idx_ = torch.argmax(P, dim=1)
+    P.fill_(0.)
+    P[torch.arange(R), max_idx_] = 1.
+    P = P.reshape(R, CH, BA)
+
+    mask = ((D.sum(dim=1) != 0)*1.0).reshape(R, 1, 1).cpu()
+    P = P * mask  # Get rid of nnz=0 rows
+    _ = torch.zeros(CH)
+    
+    return P, _, _, _
+
+def grad_row_no_register_size_cmd(layer, args):
+    tmp = args.register_size
+    R = layer.shape[0]
+    args.register_size = R
+
+    P, _, _, _ = grad_row_register_size_cmd(layer, args)
+    args.register_size = tmp
+    
+    return P, _, _, _
 
 def assign_row(D_, P, sum_row_ch, sum_col_ch, ch_i, r_i):
     aft_sum_col_ch = sum_col_ch[ch_i] + D_[r_i]  # [P_COL, COL_P]
